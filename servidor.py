@@ -1,5 +1,4 @@
 import socket
-response = open("respuesta.html", "r", encoding = "utf-8")
 
 # esta función se encarga de recibir el mensaje completo desde el cliente
 # en caso de que el mensaje sea más grande que el tamaño del buffer 'buff_size', esta función va esperar a que
@@ -116,7 +115,7 @@ if __name__ == "__main__":
     # definimos el tamaño del buffer de recepción y la secuencia de fin de mensaje
     buff_size = 4
     end_of_message = "\n"
-    new_socket_address = ('192.168.1.8', 8000) #maite: 192.168.1.8 ;;;;;;;; mati: 192.168.1.63
+    new_socket_address = ('192.168.1.63', 8000) #maite: 192.168.1.8 ;;;;;;;; mati: 192.168.1.63
  
     print('Creando socket - Servidor')
     # armamos el socket
@@ -139,6 +138,7 @@ if __name__ == "__main__":
         # cuando llega una petición de conexión la aceptamos
         # y se crea un nuevo socket que se comunicará con el cliente
         new_socket, new_socket_address = server_socket.accept()
+        response = open("respuesta.html", "r", encoding = "utf-8")
  
         # luego recibimos el mensaje usando la función que programamos
         # esta función entrega el mensaje en string (no en bytes) y sin el end_of_message
@@ -153,9 +153,10 @@ if __name__ == "__main__":
         start_line = "HTTP/1.1 200 OK\r\n"
         CT = "Content-Type: text/html; charset=utf-8\r\n"
         CL = "Content-Length: " + str(len(response_html.encode("utf-8"))) + "\r\n"
+        header_extra = "X-ElQuePregunta: HOLA\r\n"
         end_head = "\r\n"
         
-        respuesta = start_line + CT + CL + end_head + response_html
+        respuesta = start_line + CT + CL + header_extra + end_head + response_html
         print(type(respuesta))
         parseado = parse_HTTP_message(respuesta)
         print(parseado)
