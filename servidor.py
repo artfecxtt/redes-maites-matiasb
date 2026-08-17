@@ -1,4 +1,5 @@
 import socket
+response = open("respuesta.html", "r", encoding = "utf-8")
 
 # esta función se encarga de recibir el mensaje completo desde el cliente
 # en caso de que el mensaje sea más grande que el tamaño del buffer 'buff_size', esta función va esperar a que
@@ -31,7 +32,6 @@ def receive_full_message(connection_socket, buff_size, end_sequence):
     # finalmente retornamos el mensaje
     return full_message
  
- 
 def contains_end_of_message(message, end_sequence):
     return message.endswith(end_sequence)
  
@@ -50,15 +50,15 @@ def parse_HTTP_message(decodeado: bytes):
     indiceSegundo = 0
     bodyString = ""
     for k in range(len(decodeado)):
-        string += decodeado[k]
         #print(decodeado[k])
         #print(string)
         #print("k actual: "+ str(k))
-        if decodeado[k] == '\r':
-            indicePrimero = k
+        if decodeado[k] == "\r":
+            indicePrimero = k+2
             diccionario["SL"] = string
             string = ""
             break
+        string += decodeado[k]
     #print("donde terminé: " + str(indicePrimero))
     #print("donde terminaré: " + str(len(decodeado)+1))
     for i in range(indicePrimero, len(decodeado)):
@@ -67,42 +67,56 @@ def parse_HTTP_message(decodeado: bytes):
             diccionario[string]=None
             clave = string
             string = ""
-        elif decodeado[i] == '\n':
-            if ultimoString == '\r':
-                if clave != "":
-                    diccionario[clave]=string
-                    string = ""
-                    clave = ""
-                    ultimoString = ""
-                elif decodeado[i+1] == '\r' and decodeado[i+2] == '\n':
-                    indiceSegundo = i+3
-                    break
-        elif i == '\r':
-            ultimoString = '\r'
+        elif decodeado[i] == "\r":
+            if clave != "":
+                diccionario[clave]=string.strip()
+                string = ""
+                clave = ""
+                i=i+2
+            else:
+                i=i+4
+                string = ""
+                break
+        elif decodeado[i] == "\n":
+            continue
         else:
             string+=decodeado[i]
+        indiceSegundo = i+2
+            
     for j in range(indiceSegundo, len(decodeado)):
         bodyString+=decodeado[j]
     diccionario["body"]=bodyString
     return diccionario
 
-
 def create_HTTP_message(dicc: dict):
     baits = ""
+    end_message = "\r\n"
     for i in dicc:
-        if i == "SL" or i == "body":
-            baits+=dicc[i]
+        if i == "SL":
+            baits = baits + dicc[i] + end_message
+        elif i == "body":
+            baits = baits + end_message + dicc[i]# + "\n"
         else:
-            baits += i
-            baits += dicc[i]
-    baits = baits.encode()
+            baits = baits + i + ": " + dicc[i] + end_message
+    #baits =  baits.encode()
     return baits
+
+#def create_HTTP_message(dicc: dict):
+#    baits = ""
+#    for i in dicc:
+#        if i == "SL" or i == "body":
+#            baits+=dicc[i]
+#        else:
+#            baits += i
+#            baits += dicc[i]
+#    baits = baits.encode()
+#    return baits
  
 if __name__ == "__main__":
     # definimos el tamaño del buffer de recepción y la secuencia de fin de mensaje
     buff_size = 4
     end_of_message = "\n"
-    new_socket_address = ('192.168.1.63', 8000)
+    new_socket_address = ('192.168.1.8', 8000) #maite: 192.168.1.8 ;;;;;;;; mati: 192.168.1.63
  
     print('Creando socket - Servidor')
     # armamos el socket
@@ -130,16 +144,29 @@ if __name__ == "__main__":
         # esta función entrega el mensaje en string (no en bytes) y sin el end_of_message
         recv_message = receive_full_message(new_socket, buff_size, end_of_message)
 
+        #print(response.read())
         print(f' -> Se ha recibido el siguiente mensaje: {recv_message}')
+        #print(str(len(response.read())))
+
+        response_html = response.read()
+
+        start_line = "HTTP/1.1 200 OK\r\n"
+        CT = "Content-Type: text/html; charset=utf-8\r\n"
+        CL = "Content-Length: " + str(len(response_html.encode("utf-8"))) + "\r\n"
+        end_head = "\r\n"
         
-        parseado = parse_HTTP_message(recv_message)
+        respuesta = start_line + CT + CL + end_head + response_html
+        print(type(respuesta))
+        parseado = parse_HTTP_message(respuesta)
+        print(parseado)
         print('parseado')
 
         creado = create_HTTP_message(parseado)
         print('creado desde el parse')
  
         # respondemos indicando que recibimos el mensaje
-        response_message = f"Se ha sido recibido con éxito el mensaje: {creado}"
+        response_message = creado
+        #f"Se ha sido recibido con éxito el mensaje: {parseado}"
  
         # el mensaje debe pasarse a bytes antes de ser enviado, para ello usamos encode
         new_socket.send(response_message.encode())
