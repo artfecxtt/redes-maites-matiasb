@@ -1,4 +1,5 @@
 import socket
+import json
 
 # esta función se encarga de recibir el mensaje completo desde el cliente
 # en caso de que el mensaje sea más grande que el tamaño del buffer 'buff_size', esta función va esperar a que
@@ -100,6 +101,12 @@ def create_HTTP_message(dicc: dict):
     #baits =  baits.encode()
     return baits
 
+def leerJSON(nombre, ruta):
+    with open(ruta+'/'+nombre) as archivoJSON:
+        datos = json.load(archivoJSON)
+        if "X-ElQuePregunta" in datos:
+            return "X-ElQuePregunta: "+datos["X-ElQuePregunta"]
+
 #def create_HTTP_message(dicc: dict):
 #    baits = ""
 #    for i in dicc:
@@ -149,11 +156,13 @@ if __name__ == "__main__":
         #print(str(len(response.read())))
 
         response_html = response.read()
+        header_from_json = leerJSON("nuevoJSON.json", "/home/pss")
+        print(header_from_json)
 
         start_line = "HTTP/1.1 200 OK\r\n"
         CT = "Content-Type: text/html; charset=utf-8\r\n"
         CL = "Content-Length: " + str(len(response_html.encode("utf-8"))) + "\r\n"
-        header_extra = "X-ElQuePregunta: HOLA\r\n"
+        header_extra = header_from_json+"\r\n"
         end_head = "\r\n"
         
         respuesta = start_line + CT + CL + header_extra + end_head + response_html
