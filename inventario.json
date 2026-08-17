@@ -1,0 +1,19 @@
+{
+   "oficina": [
+    {
+        "nombre": "lapiz_pasta",
+        "cantidad_total": 10,
+        "colores": ["rojo","negro","azul"],
+        "rojo": 2,
+        "azul": 5,
+        "negro": 3
+
+    },
+    {
+        "nombre": "lapiz_mina",
+        "cantidad_total": 5,
+        "colores": ["grafito"],
+        "grafito": 5
+    }
+   ]
+}
