@@ -104,8 +104,17 @@ def create_HTTP_message(dicc: dict):
 def leerJSON(nombre, ruta):
     with open(ruta+'/'+nombre) as archivoJSON:
         datos = json.load(archivoJSON)
-        if "X-ElQuePregunta" in datos:
+        if "blocked" in datos:
             return "X-ElQuePregunta: "+datos["X-ElQuePregunta"]
+
+def leerJSON_dominio(nombre, ruta, dominio):
+    with open(ruta+'/'+nombre) as archivoJSON:
+        datos = json.load(archivoJSON)
+        if "blocked" in datos:
+            if dominio in datos["blocked"]:
+                return True
+            else:
+                return False
 
 #def create_HTTP_message(dicc: dict):
 #    baits = ""
@@ -152,24 +161,52 @@ if __name__ == "__main__":
         # esta función entrega el mensaje en string (no en bytes) y sin el end_of_message
         recv_message = receive_full_message(new_socket, buff_size, end_of_message)
         recv_message2 = recv_message+end_of_message
+        print(recv_message2)
         procesado = parse_HTTP_message(recv_message)
         
         if "Host" in procesado:
             separado = procesado["Host"].split(":")
+            print(separado)
             newer_socket_address = ""
             if len(separado) == 1:
                 newer_socket_address = (separado[0], 80)
             else:
                 newer_socket_address = (separado[0], int(separado[1]))
+
+            SL_separado = procesado["SL"].split(" ")
+            print(SL_separado)
+
+            ## item 2
+            dominio = SL_separado[1][7:]
+            largo = len(dominio)
+            if dominio[largo-1]=="/":
+                dominio = dominio[:largo-1]
+            print(dominio)
+            if leerJSON_dominio("bloqueos.json", "/home/pss/Escritorio", dominio):
+                gatoglup = open("forbidden.html", "r", encoding = "utf-8")
+                gatoglup_txt = gatoglup.read()
+                start_line = "HTTP/1.1 403 Forbidden\r\n"
+                CT = "Content-Type: text/html; charset=utf-8\r\n"
+                CL = "Content-Length: " + str(len(gatoglup_txt.encode("utf-8"))) + "\r\n"
+                end_head = "\r\n"
+                respuesta = start_line + CT + CL + end_head + gatoglup_txt
                 
-            cliente_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            cliente_socket.connect(newer_socket_address)
-            cliente_socket.send(recv_message2.encode())
-            while True:
-                datos = receive_full_message(cliente_socket, buff_size, end_of_message)
-                if not datos:
-                    break
-                datos2 = datos+end_of_message
-                new_socket.send(datos2.encode())
-            cliente_socket.close()
+                parseado = parse_HTTP_message(respuesta)
+                gatoglup_response = create_HTTP_message(parseado)
+                
+                new_socket.send(gatoglup_response.encode())
+                
+                new_socket.close()
+                
+            else:    
+                cliente_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                cliente_socket.connect(newer_socket_address)
+                cliente_socket.send(recv_message2.encode())
+                while True:
+                    datos = receive_full_message(cliente_socket, buff_size, end_of_message)
+                    if not datos:
+                        break
+                    datos2 = datos+end_of_message
+                    new_socket.send(datos2.encode())
+                cliente_socket.close()
         new_socket.close()
