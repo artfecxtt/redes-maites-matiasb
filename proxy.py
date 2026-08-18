@@ -130,8 +130,8 @@ def leerJSON_dominio(nombre, ruta, dominio):
 if __name__ == "__main__":
     # definimos el tamaño del buffer de recepción y la secuencia de fin de mensaje
     buff_size = 4
-    end_of_message = "\n"
-    new_socket_address = ('192.168.1.13', 8000) #maite: 192.168.1.8 ;;;;;;;; mati: 192.168.1.63
+    end_of_message = "\r\n\r\n"
+    new_socket_address = ('192.168.1.63', 8000) #maite: 192.168.1.8 ;;;;;;;; mati: 192.168.1.63
  
     print('Creando socket - Servidor')
     # armamos el socket
@@ -160,9 +160,11 @@ if __name__ == "__main__":
         # luego recibimos el mensaje usando la función que programamos
         # esta función entrega el mensaje en string (no en bytes) y sin el end_of_message
         recv_message = receive_full_message(new_socket, buff_size, end_of_message)
+        print(recv_message)
         recv_message2 = recv_message+end_of_message
         print(recv_message2)
         procesado = parse_HTTP_message(recv_message)
+        print(procesado)
         
         if "Host" in procesado:
             separado = procesado["Host"].split(":")
@@ -175,13 +177,15 @@ if __name__ == "__main__":
 
             SL_separado = procesado["SL"].split(" ")
             print(SL_separado)
+            url_pedida = SL_separado[1]
 
             ## item 2
-            dominio = SL_separado[1][7:]
-            largo = len(dominio)
-            if dominio[largo-1]=="/":
-                dominio = dominio[:largo-1]
-            print(dominio)
+            if url_pedida.startswith("http://"):
+                url_pedida=url_pedida[7:]
+            elif url_pedida.startswith("/"):
+                url_perdida = separado[0]+url_pedida
+            dominio = url_pedida.rstrip("/")
+            
             if leerJSON_dominio("bloqueos.json", "/home/pss/Escritorio", dominio):
                 gatoglup = open("forbidden.html", "r", encoding = "utf-8")
                 gatoglup_txt = gatoglup.read()
