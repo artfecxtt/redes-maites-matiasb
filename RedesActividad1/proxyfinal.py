@@ -39,6 +39,9 @@ def remove_end_of_message(full_message, end_sequence):
     index = full_message.rfind(end_sequence)
     return full_message[:index]
 
+#parece sospechoso pero, el argumento de esta función se llama así porque en un inicio estábamos decodeando los mensajes. en ese ensayo y error, era más fácil dejar como nombre
+#del argumento 'decodeado' en vez de reemplazar todo en la función. se quedó así por los jajas lowkey. lo importante es que no se encodea y decodea nada en el código. todo se está
+#trabajando en bytes
 def parse_HTTP_message(decodeado: bytes):
     diccionario = {}
     string = b""
@@ -90,7 +93,6 @@ def create_HTTP_message(dicc: dict):
             else:
                 str(dicc[i]).encode()
             baits = baits + i + b": " + val + end_message
-    #baits =  baits.encode()
     return baits
 
 def create_HTTP_message2(dicc: dict):
@@ -110,7 +112,6 @@ def create_HTTP_message2(dicc: dict):
             else:
                 str(dicc[i]).encode()
             baits = baits + i + b": " + val + end_message
-    #baits =  baits.encode()
     return baits
 
 def leerJSON(nombre):
@@ -140,17 +141,6 @@ def leerJSON_reemplazar(nombre):
         if "forbidden_words" in datos:
             return datos["forbidden_words"]
 
-#def create_HTTP_message(dicc: dict):
-#    baits = ""
-#    for i in dicc:
-#        if i == "SL" or i == "body":
-#            baits+=dicc[i]
-#        else:
-#            baits += i
-#            baits += dicc[i]
-#    baits = baits.encode()
-#    return baits
- 
 if __name__ == "__main__":
     # definimos el tamaño del buffer de recepción y la secuencia de fin de mensaje
     buff_size = 4
@@ -184,11 +174,13 @@ if __name__ == "__main__":
         # luego recibimos el mensaje usando la función que programamos
         # esta función entrega el mensaje en string (no en bytes) y sin el end_of_message
         recv_message = receive_full_message(new_socket, buff_size, end_of_message)
-        print(recv_message)
+        #print(recv_message)
+        
         recv_message2 = recv_message+end_of_message
         #print(recv_message2)
+        
         procesado = parse_HTTP_message(recv_message)
-        print(procesado)
+        #print(procesado)
         
         if b"Host" in procesado:
             separado = procesado[b"Host"].split(b":")
@@ -201,6 +193,7 @@ if __name__ == "__main__":
 
             SL_separado = procesado[b"SL"].split(b" ")
             #print(SL_separado)
+            
             url_pedida = SL_separado[1]
 
             ## item 2
@@ -238,9 +231,10 @@ if __name__ == "__main__":
                 cliente_socket.connect(newer_socket_address)
                 recv_parse = parse_HTTP_message(recv_message2)
                 recv_create = create_HTTP_message2(recv_parse)
-                print(recv_create)
+                #print(recv_create)
+                
                 cliente_socket.send(recv_create)
-                respuesta_cruda = b"" #revisar todo esto último
+                respuesta_cruda = b""
                 while True:
                     pedazo = cliente_socket.recv(buff_size)
                     if not pedazo:
@@ -248,18 +242,17 @@ if __name__ == "__main__":
                     respuesta_cruda+=pedazo
                 
                 if respuesta_cruda:
-                    #datos = respuesta_cruda.decode("utf-8", errors = "replace")
                     datos2 = parse_HTTP_message(respuesta_cruda)
                     
-                    print(datos2)
+                    #print(datos2)
+                    
                     prohibidas = leerJSON_reemplazar("bloqueos.json")
                     if prohibidas and b"body" in datos2:
                         for par in prohibidas:
                             llave = list(par.keys())[0]
-                            print(llave)
-                            print(datos2[b"body"])
+                            #print(llave)
+                            #print(datos2[b"body"])
                             datos2[b"body"] = datos2[b"body"].replace(llave.encode(), par[llave].encode())
-                            #print(datos2)
                     datos2[b"Content-Length"] = str(len(datos2[b"body"])).encode()
                     datos3 = create_HTTP_message(datos2)
                     new_socket.send(datos3)
