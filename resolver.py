@@ -1,6 +1,7 @@
 import binascii
 import socket
 
+# esta función toma un mensaje DNS y lo transforma a un diccionario para que sea manejable
 def parse_dns_message(message):
     dicc = {}
     baits = b""
@@ -183,8 +184,29 @@ def parse_dns_message(message):
         ultimo+=int.from_bytes(dicc["add_RDLENGTH"])
 
     return dicc
+
+# esta función recibe el mensaje de query en bytes obtenido desde el cliente. envía un mensaje query a la ip raíz y trata si esta es una delegación a otro NS
+def resolver(mensaje_consulta: bytes, ip_addr=root_ip):
+    buff_size = 4096
+    dgram_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     
-#def resolver(mensaje_consulta: bytes, ip_addr=root_ip) -> bytes
+    #dgram_socket.bind(('localhost', 8000))
+    
+    dgram_socket.sendto(mensaje_consulta, ip_addr)
+    
+    datos, direccion = dgram_socket.recv_from(buff_size)
+    
+    datos_parseados = parse_dns_message(datos)
+    
+    if dicc["ans_NAME"] in datos_parseados:
+        return dicc["ans_RDATA"]
+    elif dicc["auth_NAME"] in datos_parseados:
+        if b"NS" in dicc["auth_RDATA"]:
+            if dicc["add_RDATA"] != b"":
+                dgram_socket.send_to(mensaje_consulta, dicc["add_RDATA"])
+            else:
+                dgram_socket.send_to(mensaje_consulta, dicc["auth_RDATA"])
+
 
 #def send_dns_message(address, port):
 #    # Encabezado con ID 0 (00 00 en hexadecimal), preguntamos por example.com
