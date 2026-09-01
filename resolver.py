@@ -1,6 +1,46 @@
 import binascii
 import socket
 
+
+def parse_record(message, offset):
+    baits_name = b""
+    while offset < len(message):
+        byte_actual = message[offset]
+        if byte_actual >= 0xC0:
+            baits_name += message[offset:offset+2]
+            offset += 2
+            break
+        elif byte_actual == 0x00:
+            baits_name += message[offset:offset+1]
+            offset += 1
+            break
+        else:
+            longitud = byte_actual
+            baits_name += message[offset:offset + 1 + longitud]
+            offset += 1 + longitud
+
+    rtype = message[offset:offset+2]
+    offset += 2
+    rclass = message[offset:offset+2]
+    offset += 2
+    rttl = message[offset:offset+4]
+    offset += 4
+    rdlength = message[offset:offset+2]
+    offset += 2
+
+    len_rdata = int.from_bytes(rdlength, 'big')
+    rdata = message[offset:offset+len_rdata]
+    offset += len_rdata
+
+    return {
+        "NAME": baits_name,
+        "TYPE": rtype,
+        "CLASS": rclass,
+        "TTL": rttl,
+        "RDLENGTH": rdlength,
+        "RDATA": rdata
+    }, offset
+
 # esta función toma un mensaje DNS y lo transforma a un diccionario para que sea manejable
 def parse_dns_message(message):
     dicc = {}
@@ -63,149 +103,74 @@ def parse_dns_message(message):
     ultimo+=2
     
     #SECCIÓN ANSWER
-    if int.from_bytes(dicc["ANCOUNT"]) > 0:
-        for k in range(ultimo, len(message)):
-            if message[k:k+1] == b"\x00":
-                ultimo = k+1
-                dicc["ans_NAME"] = baits
-                baits = b""
-                break
-            baits+=message[k:k+1]
-            
-        for k in range(ultimo, ultimo + 2):
-            baits+=message[k:k+1]
-        dicc["ans_TYPE"]= baits
-        baits=b""
-        ultimo+=2
-            
-        for k in range(ultimo, ultimo + 2):
-            baits+=message[k:k+1]
-        dicc["ans_CLASS"]= baits
-        baits=b""
-        ultimo+=2
-        
-        for k in range(ultimo, ultimo + 4):
-            baits+=message[k:k+1]
-        dicc["ans_TTL"]= baits
-        baits=b""
-        ultimo+=4
-        
-        for k in range(ultimo, ultimo + 2):
-            baits+=message[k:k+1]
-        dicc["ans_RDLENGTH"]= baits
-        baits=b""
-        ultimo+=2
-        
-        for k in range(ultimo, ultimo+int.from_bytes(dicc["ans_RDLENGTH"])):
-            baits+=message[k:k+1]
-        dicc["ans_RDATA"]= baits
-        baits=b""
-        ultimo+=int.from_bytes(dicc["ans_RDLENGTH"])
+    dicc["Answers"] = []
+    ancount = int.from_bytes(dicc["ANCOUNT"], 'big')
+    for _ in range(ancount):
+        rec, ultimo = parse_record(message, ultimo)
+        dicc["Answers"].append(rec)
+    if ancount > 0:
+        dicc["ans_TYPE"] = dicc["Answers"][0]["TYPE"]
+        dicc["ans_RDATA"] = dicc["Answers"][0]["RDATA"]
     
     #SECCIÓN AUTHORITY
-    if int.from_bytes(dicc["NSCOUNT"]) > 0:
-        for k in range(ultimo, len(message)):
-            if message[k:k+1] == b"\x00":
-                ultimo = k+1
-                dicc["auth_NAME"] = baits
-                baits = b""
-                break
-            baits+=message[k:k+1]
-            
-        for k in range(ultimo, ultimo + 2):
-            baits+=message[k:k+1]
-        dicc["auth_TYPE"]= baits
-        baits=b""
-        ultimo+=2
-            
-        for k in range(ultimo, ultimo + 2):
-            baits+=message[k:k+1]
-        dicc["auth_CLASS"]= baits
-        baits=b""
-        ultimo+=2
-        
-        for k in range(ultimo, ultimo + 4):
-            baits+=message[k:k+1]
-        dicc["auth_TTL"]= baits
-        baits=b""
-        ultimo+=4
-        
-        for k in range(ultimo, ultimo + 2):
-            baits+=message[k:k+1]
-        dicc["auth_RDLENGTH"]= baits
-        baits=b""
-        ultimo+=2
-        
-        for k in range(ultimo, ultimo+int.from_bytes(dicc["auth_RDLENGTH"])):
-            baits+=message[k:k+1]
-        dicc["auth_RDATA"]= baits
-        baits=b""
-        ultimo+=int.from_bytes(dicc["auth_RDLENGTH"])
+    dicc["Authorities"] = []
+    nscount = int.from_bytes(dicc["NSCOUNT"], 'big')
+    for _ in range(nscount):
+        rec, ultimo = parse_record(message, ultimo)
+        dicc["Authorities"].append(rec)
+    if nscount > 0:
+        dicc["auth_TYPE"] = dicc["Authorities"][0]["TYPE"]
+        dicc["auth_RDATA"] = dicc["Authorities"][0]["RDATA"]
     
     #SECCIÓN ADDITONIALS 
-    if int.from_bytes(dicc["ARCOUNT"]) > 0:
-    
-        for k in range(ultimo, len(message)):
-            if message[k:k+1] == b"\x00":
-                ultimo = k+1
-                dicc["add_NAME"] = baits
-                baits = b""
-                break
-            baits+=message[k:k+1]
-            
-        for k in range(ultimo, ultimo + 2):
-            baits+=message[k:k+1]
-        dicc["add_TYPE"]= baits
-        baits=b""
-        ultimo+=2
-            
-        for k in range(ultimo, ultimo + 2):
-            baits+=message[k:k+1]
-        dicc["add_CLASS"]= baits
-        baits=b""
-        ultimo+=2
-        
-        for k in range(ultimo, ultimo + 4):
-            baits+=message[k:k+1]
-        dicc["add_TTL"]= baits
-        baits=b""
-        ultimo+=4
-        
-        for k in range(ultimo, ultimo + 2):
-            baits+=message[k:k+1]
-        dicc["add_RDLENGTH"]= baits
-        baits=b""
-        ultimo+=2
-        
-        for k in range(ultimo, ultimo+int.from_bytes(dicc["add_RDLENGTH"])):
-            baits+=message[k:k+1]
-        dicc["add_RDATA"]= baits
-        baits=b""
-        ultimo+=int.from_bytes(dicc["add_RDLENGTH"])
+    dicc["Additionals"] = []
+    arcount = int.from_bytes(dicc["ARCOUNT"], 'big')
+    for _ in range(arcount):
+        rec, ultimo = parse_record(message, ultimo)
+        dicc["Additionals"].append(rec)
+    if arcount > 0:
+        dicc["add_TYPE"] = dicc["Additionals"][0]["TYPE"]
+        dicc["add_RDATA"] = dicc["Additionals"][0]["RDATA"]
 
     return dicc
 
+root_ip = "198.41.0.4"
+
 # esta función recibe el mensaje de query en bytes obtenido desde el cliente. envía un mensaje query a la ip raíz y trata si esta es una delegación a otro NS
-def resolver(mensaje_consulta: bytes, ip_addr=root_ip):
-    buff_size = 4096
-    dgram_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+def resolver(mensaje_consulta: bytes, ip_addr=root_ip) -> bytes:
+    print("Creando socket.................................")
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.settimeout(4.0)
+    try:
+        print(f"Enviando query a {ip_addr}.............................")
+        sock.sendto(mensaje_consulta, (ip_addr, 53))
+        respuesta, _ = sock.recvfrom(4096)
+    except Exception:
+        return b""
+    finally:
+        sock.close()
+
     
-    #dgram_socket.bind(('localhost', 8000))
-    
-    dgram_socket.sendto(mensaje_consulta, ip_addr)
-    
-    datos, direccion = dgram_socket.recv_from(buff_size)
-    
-    datos_parseados = parse_dns_message(datos)
-    
-    if dicc["ans_NAME"] in datos_parseados:
-        return dicc["ans_RDATA"]
-    elif dicc["auth_NAME"] in datos_parseados:
-        if b"NS" in dicc["auth_RDATA"]:
-            if dicc["add_RDATA"] != b"":
-                dgram_socket.send_to(mensaje_consulta, dicc["add_RDATA"])
-            else:
-                dgram_socket.send_to(mensaje_consulta, dicc["auth_RDATA"])
+    parsed = parse_dns_message(respuesta)
+
+    for ans in parsed.get("Answers", []):
+        if ans["TYPE"] == b"\x00\x01":
+            return respuesta
+
+    if int.from_bytes(parsed.get("NSCOUNT", b"\x00\x00"), 'big') > 0:
+        for add in parsed.get("Additionals", []):
+            if add["TYPE"] == b"\x00\x01":
+                rdata = add["RDATA"]
+                siguiente_ip = f"{rdata[0]}.{rdata[1]}.{rdata[2]}.{rdata[3]}"
+                dominio = parsed.get("QNAME", b"\x00\x00").decode()
+                if parsed.get("Authority", []) != []:
+                    raiz = parsed.get("Authority", [])[0]["NAME"]
+                    print(f"Consultando {dominio} a {raiz} con la dirección IP {siguiente_ip}")
+                else:
+                    print(f"Consultando {dominio} a '.' con la dirección IP {siguiente_ip}")
+                return resolver(mensaje_consulta, siguiente_ip)
+
+    return b""
 
 
 #def send_dns_message(address, port):
@@ -248,6 +213,14 @@ if __name__ == "__main__":
         print(message)
         print(len(message))
         
+        resolve = resolver(message)
+        
+        print(resolve)
+        
+        if resolve:
+            dgram_socket.sendto(resolve, address)
+
+       
         message2=parse_dns_message(message)
         print(message2)
          
