@@ -2,7 +2,10 @@ import binascii
 import socket
 
 # esta función toma un mensaje DNS junto al offset dado y extrae el nombre, tipo, 
-# clase, ttl, rdlengt y data en un diccionario de la sección que se trabaja
+# clase, ttl, rdlength y data en un diccionario de la sección que se trabaja
+# se usa para el manejo de cosas como bytes comprimidos, que en un inicio causaron problemas en el parser
+# ya que movía lo procesado entre las diferentes secciones que se guardaban en el diccionario. en particular, revisa
+# si viene el puntero de compresión 0xC0 en vez de basarse solo en la búsqueda del byte nulo
 def parse_record(message, offset):
     baits_name = b""
     while offset < len(message):
@@ -112,7 +115,7 @@ def parse_dns_message(message):
     baits=b""
     ultimo+=2
     
-    #SECCIÓN ANSWER
+    # answer
     # inicia una lista dentro del diccionario para guardar toda la información 
     # respecto a la sección de answer
     dicc["Answers"] = []
@@ -126,7 +129,7 @@ def parse_dns_message(message):
         dicc["ans_TYPE"] = dicc["Answers"][0]["TYPE"]
         dicc["ans_RDATA"] = dicc["Answers"][0]["RDATA"]
     
-    #SECCIÓN AUTHORITY
+    # authority
     # inicia una lista dentro del diccionario para guardar toda la información 
     # respecto a la sección de authority
     dicc["Authorities"] = []
@@ -140,7 +143,7 @@ def parse_dns_message(message):
         dicc["auth_TYPE"] = dicc["Authorities"][0]["TYPE"]
         dicc["auth_RDATA"] = dicc["Authorities"][0]["RDATA"]
     
-    #SECCIÓN ADDITONIALS 
+    # additionals
     # inicia una lista dentro del diccionario para guardar toda la información 
     # respecto a la sección de additionals
     dicc["Additionals"] = []
@@ -150,13 +153,14 @@ def parse_dns_message(message):
         rec, ultimo = parse_record(message, ultimo)
         dicc["Additionals"].append(rec)
     if arcount > 0:
-        # si es que indica en nscount, se guarda el type y data de la sección
+        # si es que indica en arcount, se guarda el type y data de la sección
         dicc["add_TYPE"] = dicc["Additionals"][0]["TYPE"]
         dicc["add_RDATA"] = dicc["Additionals"][0]["RDATA"]
 
     return dicc
 
 root_ip = "198.41.0.4"
+
 cache=[]
 historial_consultas = []
 
@@ -168,10 +172,15 @@ def resolver(mensaje_consulta: bytes, ip_addr=root_ip) -> bytes:
 
     # si está en la consulta inicial (ip_addr == root_ip), verificar caché
     if ip_addr == root_ip:
+
+        #lógica que mantiene los últimos 20, borrando el más viejo
         if len(historial_consultas) == 20:
             historial_consultas.pop(0)
+
+        #metemos el último q se consultó
         historial_consultas.append(dominio)
 
+        #manejo para obtener el top 3 de dominios más usados
         conteo = {x: historial_consultas.count(x) for x in set(historial_consultas)}
         top_3 = [item[0] for item in sorted(conteo.items(), key=lambda item: item[1], reverse=True)[:3]]
 
@@ -219,11 +228,11 @@ def resolver(mensaje_consulta: bytes, ip_addr=root_ip) -> bytes:
         # si no está en additionals, se ve en authorities
         if siguiente_ip is None and parsed.get("Authorities", []):
             ns_record = parsed["Authorities"][0]
-            ns_name_bytes = ns_record.get("RDATA", b"")
+            ns_name_bytes = ns_record.get("RDATA", b"") #dominio del name server
             
-            # se construye la query
-            header = mensaje_consulta[:2] + b"\x01 \x00\x01\x00\x00\x00\x00\x00\x00"
-            query_ns = header + ns_name_bytes + b"\x00\x01\x00\x01"
+            # se construye la query, donde hacemos otra consulta nueva debido a que no tenemos la ip necesaria
+            header = mensaje_consulta[:2] + b"\x01 \x00\x01\x00\x00\x00\x00\x00\x00" #aquí, el primer \x01 es que RD = 1, el \x00 y \x01 es QDCOUNT = 1, el resto es que ANCOUNT, NSCOUNT, ARCOUNT son 0
+            query_ns = header + ns_name_bytes + b"\x00\x01\x00\x01" #esto es QTYPE = 1 (ipv4) y QCLASS = 1 (internet)
             
             resp_ns = resolver(query_ns, root_ip)
             parsed_ns = parse_dns_message(resp_ns)
@@ -252,7 +261,8 @@ if __name__ == "__main__":
 
     # Socket no orientado a conexión
     dgram_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    
+
+    #bindeamos el snoc
     dgram_socket.bind(('localhost', 8000))
     
     #message, address = dgram_socket.recvfrom(buff_size)
