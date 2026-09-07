@@ -124,10 +124,6 @@ def parse_dns_message(message):
         # se parsea según la estructura dada en el parse_record
         rec, ultimo = parse_record(message, ultimo)
         dicc["Answers"].append(rec)
-    if ancount > 0:
-        # si es que indica en ancount, se guarda el type y data de la sección
-        dicc["ans_TYPE"] = dicc["Answers"][0]["TYPE"]
-        dicc["ans_RDATA"] = dicc["Answers"][0]["RDATA"]
     
     # authority
     # inicia una lista dentro del diccionario para guardar toda la información 
@@ -138,10 +134,6 @@ def parse_dns_message(message):
         # se parsea según la estructura dada en el parse_record
         rec, ultimo = parse_record(message, ultimo)
         dicc["Authorities"].append(rec)
-    if nscount > 0:
-        # si es que indica en nscount, se guarda el type y data de la sección
-        dicc["auth_TYPE"] = dicc["Authorities"][0]["TYPE"]
-        dicc["auth_RDATA"] = dicc["Authorities"][0]["RDATA"]
     
     # additionals
     # inicia una lista dentro del diccionario para guardar toda la información 
@@ -152,10 +144,6 @@ def parse_dns_message(message):
         # se parsea según la estructura dada en el parse_record
         rec, ultimo = parse_record(message, ultimo)
         dicc["Additionals"].append(rec)
-    if arcount > 0:
-        # si es que indica en arcount, se guarda el type y data de la sección
-        dicc["add_TYPE"] = dicc["Additionals"][0]["TYPE"]
-        dicc["add_RDATA"] = dicc["Additionals"][0]["RDATA"]
 
     return dicc
 
@@ -168,7 +156,17 @@ historial_consultas = []
 def resolver(mensaje_consulta: bytes, ip_addr=root_ip) -> bytes:
     # se obtiene el dominio del mensaje que llegó
     parsed_msg = parse_dns_message(mensaje_consulta)
-    dominio = parsed_msg.get("QNAME", b"\x00\x00").decode()
+    dominio_bytes = parsed_msg.get("QNAME", b"")
+
+    # se formatea el dominio para que tenga los puntos, puesto que al inicio viene sin ellos
+    dominio = ""
+    i = 0
+    while i < len(dominio_bytes):
+        longitud = dominio_bytes[i]
+        if longitud == 0:
+            break
+        dominio += ("." if dominio else "") + dominio_bytes[i+1 : i+1+longitud].decode()
+        i += 1 + longitud
 
     # si está en la consulta inicial (ip_addr == root_ip), verificar caché
     if ip_addr == root_ip:
@@ -271,12 +269,12 @@ if __name__ == "__main__":
     while True:
         # Recibir mensajes. Este método nos entrega el mensaje junto a la dirección de origen del mensaje
         message, address = dgram_socket.recvfrom(buff_size)
-        print(message)
-        print(len(message))
+        #print(message)
+        #print(len(message))
         
         resolve = resolver(message)
         
-        print(resolve)
+        #print(resolve)
         
         if resolve:
             dgram_socket.sendto(resolve, address)
