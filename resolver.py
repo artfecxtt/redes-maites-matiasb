@@ -32,7 +32,7 @@ def parse_record(message, offset):
     rdlength = message[offset:offset+2]
     offset += 2
 
-    len_rdata = int.from_bytes(rdlength, 'big')
+    len_rdata = int.from_bytes(rdlength)
     rdata = message[offset:offset+len_rdata]
     offset += len_rdata
 
@@ -129,7 +129,7 @@ def parse_dns_message(message):
     # inicia una lista dentro del diccionario para guardar toda la información 
     # respecto a la sección de authority
     dicc["Authorities"] = []
-    nscount = int.from_bytes(dicc["NSCOUNT"], 'big')
+    nscount = int.from_bytes(dicc["NSCOUNT"])
     for _ in range(nscount):
         # se parsea según la estructura dada en el parse_record
         rec, ultimo = parse_record(message, ultimo)
@@ -139,7 +139,7 @@ def parse_dns_message(message):
     # inicia una lista dentro del diccionario para guardar toda la información 
     # respecto a la sección de additionals
     dicc["Additionals"] = []
-    arcount = int.from_bytes(dicc["ARCOUNT"], 'big')
+    arcount = int.from_bytes(dicc["ARCOUNT"])
     for _ in range(arcount):
         # se parsea según la estructura dada en el parse_record
         rec, ultimo = parse_record(message, ultimo)
@@ -158,7 +158,6 @@ def resolver(mensaje_consulta: bytes, ip_addr=root_ip) -> bytes:
     parsed_msg = parse_dns_message(mensaje_consulta)
     dominio_bytes = parsed_msg.get("QNAME", b"")
 
-    # se formatea el dominio para que tenga los puntos, puesto que al inicio viene sin ellos
     dominio = ""
     i = 0
     while i < len(dominio_bytes):
@@ -213,7 +212,7 @@ def resolver(mensaje_consulta: bytes, ip_addr=root_ip) -> bytes:
             return respuesta
             
     # se delega
-    if int.from_bytes(parsed.get("NSCOUNT", b"\x00\x00"), 'big') > 0:
+    if int.from_bytes(parsed.get("NSCOUNT", b"\x00\x00")) > 0:
         siguiente_ip = None
 
         # se busca la ip tipo A en additional
