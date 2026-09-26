@@ -1,16 +1,18 @@
 #debe tener socket UDP, dirección de destino, número de secuencia, todo lo que usted considere necesario.
+import socket
 
-class Mascota:
+class SocketTCP:
     def __init__(self):
         # inicializamos las variables que definen una mascota
         # los datos que aun no sabemos se ponen como None
-        self.especie = None
-        self.peso = None
-        self.tamanno = None
-        self.buena_mascota = True
+        self.socketUDP = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.dirdestino = ("localhost", 8000)
+        self.nrosec = None
 
     @staticmethod
-    def parse_mascota(pet_str):
+    #estructura de headers TCP debemos usar bytes directamente. notar forma en que dichos bytes codifican
+    #esto es para que pueda pasar segmentos tcp a alguna estructura de datos más cómoda
+    def parse_segment(pet_str):
         nueva_mascota = Mascota()
         pet_split = pet_str.split(" ")
 
@@ -20,7 +22,8 @@ class Mascota:
 
         return nueva_mascota
 
-    def set_from_str(self, pet_str):
+    #crea segmentos a partir de dicha estructura de datos
+    def create_segment(self, pet_str):
         nueva_mascota = self.parse_mascota(pet_str)
         self.especie = nueva_mascota.especie
         self.peso = nueva_mascota.peso
