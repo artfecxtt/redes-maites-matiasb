@@ -1,4 +1,5 @@
 import socket
+from socketTCP import SocketTCP
  
 # esta función se encarga de recibir el mensaje completo desde el cliente
 # en caso de que el mensaje sea más grande que el tamaño del buffer 'buff_size', esta función va esperar a que
@@ -37,9 +38,10 @@ def remove_end_of_message(full_message, end_sequence):
     return full_message[:index]
  
 if __name__ == "__main__":
-    buff_size = 16
+    buff_size = 20 #4 bytes cabecera + 16 contenido
+    socket_x = SocketTCP()
 
-    # Socket no orientado a conexión
+    # socket no orientado a conexión
     dgram_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     #bindeamos el snoc
@@ -48,15 +50,22 @@ if __name__ == "__main__":
     #message, address = dgram_socket.recvfrom(buff_size)
     #print(message)
 
-    mensaje = b""
+    mensaje_completo = b""
 
     while True:
-        # Recibir mensajes. Este método nos entrega el mensaje junto a la dirección de origen del mensaje
+        
         message, address = dgram_socket.recvfrom(buff_size)
-        mensaje+=message
+        segmento = socket_x.parse_segment(message)
+        if segmento["fin"]:
+            print("tamos listos")
+            break
+        mensaje_completo+=segmento["data"]
         print(message)
         #print(len(message))
-        if b"__EOF__" in mensaje:
-            break
-    print(mensaje.decode("utf-8"))
+        #if b"__EOF__" in mensaje:
+        #    break
+    print(mensaje_completo.decode("utf-8"))
     dgram_socket.close()
+    
+    
+    
