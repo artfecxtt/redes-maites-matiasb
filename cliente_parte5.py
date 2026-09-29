@@ -15,3 +15,5 @@ client_socketTCP.send(message)
 # test 3
 message = "Mensaje de largo 19".encode()
 client_socketTCP.send(message)
+
+client_socketTCP.close()

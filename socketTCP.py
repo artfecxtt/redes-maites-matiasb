@@ -13,6 +13,7 @@ class SocketTCP:
         self.nroack = 0
         self.bytes_por_recibir = 0
         self.buffer_sobrante = b""
+        self.seq_prev = 0
 
     @staticmethod
     #estructura de headers TCP debemos usar bytes directamente. notar forma en que dichos bytes codifican
@@ -32,8 +33,8 @@ class SocketTCP:
     @staticmethod
     #crea segmentos a partir de dicha estructura de datos
     def create_segment(segmento_dict):
-        seq = segmento_dict.get('seq', 0)
-        ack = segmento_dict.get('ack', 0)
+        seq = segmento_dict.get('seq', 0) % 256
+        ack = segmento_dict.get('ack', 0) % 256
         if "syn" in segmento_dict and segmento_dict["syn"] == True:
             syn = 1
         else:
@@ -62,28 +63,27 @@ class SocketTCP:
         self.dirdestino = address
         self.nrosec = random.randint(0, 100)
 
-        # se envia el mensaje SYN
-        syn_seg = {"seq": self.nrosec, "ack": 0, "syn": True, "fin": False, "data": b""}
-        self.socketUDP.sendto(self.create_segment(syn_seg), self.dirdestino)
+        while True:
+            try:
+                # se envia el mensaje SYN
+                syn_seg = {"seq": self.nrosec, "ack": 0, "syn": True, "fin": False, "data": b""}
+                self.socketUDP.sendto(self.create_segment(syn_seg), self.dirdestino)
+                
+                # esperamos por el SYN + ACK
+                response, server_new_addr = self.socketUDP.recvfrom(16)
+                resp = self.parse_segment(response)
+                
+                if resp["syn"] and resp["ack"] == (self.nrosec + 1):
+                    self.dirdestino = server_new_addr
+                    self.nrosec = resp["ack"]
+                    self.nroack = resp["seq"] + 1
+                    break
+            except socket.timeout:
+                continue
 
-        # esperamos por el SYN + ACK
-        response, server_new_addr = self.socketUDP.recvfrom(16)
-        resp = self.parse_segment(response)
-
-        if resp["syn"] and resp["ack"] == (self.nrosec + 1):
-            # se actualiza el destino a la nueva dirección y puerto q respondió
-            self.dirdestino = server_new_addr
-
-            # se avanza y guarda el ACK
-            self.nrosec = resp["ack"]
-            self.nroack = resp["seq"] + 1
-
-            # se envía el ack para completar el handshake
-            ack_seg = {"seq": self.nrosec, "ack": self.nroack, "syn": False, "fin": False, "data": b""}
-            self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
-            print("ta lista la conexión")
-        else:
-            print("fallo en el handshake")
+        ack_seg = {"seq": self.nrosec, "ack": self.nrosec, "syn": False, "fin": False, "data": b""}
+        self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+        print("ta lista la conexión")
     
     def accept(self):
         # se espera por el SYN
@@ -104,30 +104,50 @@ class SocketTCP:
         nuevo_socket.nroack = seg['seq'] + 1
 
         # se envía el SYN + ACK por el nuevo socket
+        nuevo_socket.socketUDP.settimeout(2.0)
         syn_ack = {'seq': nuevo_socket.nrosec, 'ack': nuevo_socket.nroack, 'syn': True, 'fin': False, 'data': b''}
-        nuevo_socket.socketUDP.sendto(self.create_segment(syn_ack), nuevo_socket.dirdestino)
-
-        # se espera el ACK final en el 8001
-        ack, _ = nuevo_socket.socketUDP.recvfrom(16)
-        ack_final = self.parse_segment(ack)
-
-        if ack_final['ack'] == (nuevo_socket.nrosec + 1):
-            nuevo_socket.nrosec = ack_final['ack']
-            nuevo_socket.nroack = ack_final['seq']
-            return nuevo_socket, nueva_dir
-        else:
-            nuevo_socket.close()
-            print("no se recibió último ack")
+        
+        while True:
+            try:
+                nuevo_socket.socketUDP.sendto(self.create_segment(syn_ack), nuevo_socket.dirdestino)
+                
+                # se espera el ACK final en el 8001
+                ack, _ = nuevo_socket.socketUDP.recvfrom(16)
+                ack_final = self.parse_segment(ack)
+                
+                if ack_final['ack'] == (nuevo_socket.nrosec + 1):
+                    nuevo_socket.nrosec = ack_final['ack']
+                    nuevo_socket.nroack = ack_final['seq']
+                    break
+                    
+                if not ack_final["syn"] and not ack_final["fin"] and len(ack_final["data"]) > 0:
+                    nuevo_socket.nrosec = ack_final['ack']
+                    nuevo_socket.nroack = ack_final['seq']
+                    
+                    nuevo_socket.buffer_sobrante = ack
+                    break
+            except socket.timeout:
+                continue
+        
+        return nuevo_socket, nueva_dir
 
     def send(self, message):
         buff_size = 20
         msg_length = len(message)
         
+        self.socketUDP.settimeout(2.0)
+        
         largo_bytes = str(msg_length).encode('utf-8')
         segmento = {'seq': self.nrosec, 'ack': 0, 'syn': False, 'fin': False, 'data': largo_bytes}
-        self.socketUDP.sendto(self.create_segment(segmento), self.dirdestino)
-        ack, _ = self.socketUDP.recvfrom(buff_size)
-        self.nrosec += len(largo_bytes)
+        
+        while True:
+            try:
+                self.socketUDP.sendto(self.create_segment(segmento), self.dirdestino)
+                ack, _ = self.socketUDP.recvfrom(buff_size)
+                self.nrosec += len(largo_bytes)
+                break
+            except socket.timeout:
+                continue
     
         bytes_enviados = 0
 
@@ -136,13 +156,17 @@ class SocketTCP:
             if not pedacito:
                 break
             seg = {'seq': self.nrosec, 'ack': 0, 'syn': False, 'fin': False, 'data': pedacito}
-            self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
             
-            ack, _ = self.socketUDP.recvfrom(buff_size)
-            
-            self.nrosec += len(pedacito)
-            bytes_enviados += len(pedacito)
-            
+            while True:
+                try:
+                    self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
+                    ack, _ = self.socketUDP.recvfrom(buff_size)
+                    self.nrosec += len(pedacito)
+                    bytes_enviados += len(pedacito)
+                    break
+                except socket.timeout:
+                    continue
+
         #fin_seg = {'seq': self.nrosec, 'ack': 0, 'syn': False, 'fin': True, 'data': b""}
         #self.socketUDP.sendto(self.create_segment(fin_seg), self.dirdestino)
     
@@ -151,11 +175,16 @@ class SocketTCP:
 
         # si los bytes_por_recibir son 0, hay q esperar por el mensaje inicial cn el largo
         if self.bytes_por_recibir == 0:
-            msg, self.dirdestino = self.socketUDP.recvfrom(udp_buff_size)
+            if self.buffer_sobrante:
+                msg = self.buffer_sobrante
+                self.buffer_sobrante = b""
+            else:
+                msg, self.dirdestino = self.socketUDP.recvfrom(udp_buff_size)
+                
             seg_largo = self.parse_segment(msg)
-            
             # se saca la longitud
             message_length = int(seg_largo['data'].decode('utf-8'))
+            self.seq_prev = seg_largo["seq"]
             self.bytes_por_recibir = message_length
 
             # se envía el ACK de confirmación al emisor
@@ -173,9 +202,10 @@ class SocketTCP:
         while len(message_received) < limite_esperado:
             raw_data, self.dirdestino = self.socketUDP.recvfrom(udp_buff_size)
             seg_datos = self.parse_segment(raw_data)
-
-            #se acumula solo la data
-            message_received += seg_datos['data']
+            
+            if seg_datos["seq"] + len(seg_datos["data"]) != self.seq_prev:
+                message_received += seg_datos['data']
+                self.seq_prev = seg_datos["seq"] + len(seg_datos["data"])
 
             # se envía ACK de confirmación solo al emisor
             ack_seg = {'seq': self.nrosec, 'ack': seg_datos['seq'] + len(seg_datos['data']), 'syn': False, 'fin': False, 'data': b''}
@@ -194,9 +224,56 @@ class SocketTCP:
         return resultado
         
     def close(self):
-        pass
+        buff_size = 20
         
+        #print(self.nrosec)
+        segmento = {'seq': self.nrosec, 'ack': 0, 'syn': False, 'fin': True, 'data': b""}
+        #print(msg)
+        
+        self.socketUDP.settimeout(2.0)
+        
+        i = 0
+        while i < 3:
+            try:
+                self.socketUDP.sendto(self.create_segment(segmento), self.dirdestino)
+                ack, _ = self.socketUDP.recvfrom(buff_size)
+                msg = self.parse_segment(ack)
+                
+                if msg["fin"] == True and msg["ack"] == self.nrosec + 1:
+                    seg = {'seq': self.nrosec + 2, 'ack': self.nrosec + 2, 'syn': False, 'fin': False, 'data': b""}
+                    self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
+                    break
+            except socket.timeout:
+                i+=1
+                print("fallazo_close")
+                continue
+
+        self.socketUDP.close()
+
     def recv_close(self):
-        pass
+        buff_size = 20
+        ack, _ = self.socketUDP.recvfrom(buff_size)
+        msg = self.parse_segment(ack)
+        
+        if msg["fin"] == True:
+            self.socketUDP.settimeout(2.0)
+            i = 0
+            while i < 3:
+                try:
+                    seg = {'seq': msg["seq"] + 1, 'ack': msg["seq"] + 1, 'syn': False, 'fin': True, 'data': b""}
+                    self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
+                        
+                    final, _ = self.socketUDP.recvfrom(buff_size)
+                    final_ack = self.parse_segment(final)
+                    break
+                except socket.timeout:
+                    i+=1
+                    print("fallazo_recvclose")
+                    continue
+        else:
+            print("no es fin")
+             
+        self.socketUDP.close()
+        
 
 
