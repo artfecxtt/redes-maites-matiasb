@@ -1,6 +1,7 @@
 #debe tener socket UDP, dirección de destino, número de secuencia, todo lo que usted considere necesario.
 import socket
 import random
+import time
 
 class SocketTCP:
     def __init__(self):
@@ -139,13 +140,18 @@ class SocketTCP:
         
         largo_bytes = str(msg_length).encode('utf-8')
         segmento = {'seq': self.nrosec, 'ack': 0, 'syn': False, 'fin': False, 'data': largo_bytes}
+        esperado_ack = (self.nrosec + len(largo_bytes)) % 256
         
         while True:
             try:
                 self.socketUDP.sendto(self.create_segment(segmento), self.dirdestino)
                 ack, _ = self.socketUDP.recvfrom(buff_size)
-                self.nrosec += len(largo_bytes)
-                break
+                ack_seg = self.parse_segment(ack)
+
+                if ack_seg['ack'] == esperado_ack:
+                    self.nrosec = esperado_ack
+                    break
+                
             except socket.timeout:
                 continue
     
@@ -155,15 +161,19 @@ class SocketTCP:
             pedacito = message[bytes_enviados:bytes_enviados+16]
             if not pedacito:
                 break
-            seg = {'seq': self.nrosec, 'ack': 0, 'syn': False, 'fin': False, 'data': pedacito}
+            seg = {'seq': self.nrosec % 256, 'ack': 0, 'syn': False, 'fin': False, 'data': pedacito}
+            esperado_ack = (self.nrosec + len(pedacito)) % 256
             
             while True:
                 try:
                     self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
                     ack, _ = self.socketUDP.recvfrom(buff_size)
-                    self.nrosec += len(pedacito)
-                    bytes_enviados += len(pedacito)
-                    break
+                    ack_seg = self.parse_segment(ack)
+
+                    if ack_seg['ack'] == esperado_ack:
+                        self.nrosec = esperado_ack
+                        bytes_enviados += len(pedacito)
+                        break
                 except socket.timeout:
                     continue
 
@@ -172,24 +182,51 @@ class SocketTCP:
     
     def recv(self, buff_size):
         udp_buff_size = 20
-
+        self.socketUDP.settimeout(None)
+        
         # si los bytes_por_recibir son 0, hay q esperar por el mensaje inicial cn el largo
         if self.bytes_por_recibir == 0:
-            if self.buffer_sobrante:
-                msg = self.buffer_sobrante
-                self.buffer_sobrante = b""
-            else:
-                msg, self.dirdestino = self.socketUDP.recvfrom(udp_buff_size)
-                
-            seg_largo = self.parse_segment(msg)
-            # se saca la longitud
-            message_length = int(seg_largo['data'].decode('utf-8'))
-            self.seq_prev = seg_largo["seq"]
-            self.bytes_por_recibir = message_length
+            while True:
+                if self.buffer_sobrante:
+                    msg = self.buffer_sobrante
+                    self.buffer_sobrante = b""
+                else:
+                    msg, self.dirdestino = self.socketUDP.recvfrom(udp_buff_size)
+                    
+                seg_largo = self.parse_segment(msg)
 
-            # se envía el ACK de confirmación al emisor
-            ack_seg = {'seq': self.nrosec, 'ack': seg_largo['seq'] + len(seg_largo['data']), 'syn': False, 'fin': False, 'data': b''}
-            self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+                if seg_largo["fin"]:
+                    self.buffer_sobrante = msg
+                    return b""
+
+                # tolerancia pérdidas
+                try:
+                    # se saca la longitud
+                    message_length = int(seg_largo['data'].decode('utf-8'))
+                    self.seq_prev = (seg_largo["seq"] + len(seg_largo['data'])) % 256
+                    self.bytes_por_recibir = message_length
+
+                    # se envía el ACK de confirmación al emisor
+                    ack_seg = {
+                        'seq': self.nrosec % 256,
+                        'ack': self.seq_prev,
+                        'syn': False,
+                        'fin': False,
+                        'data': b''
+                    }
+                    self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+                    break
+                except ValueError:
+                    ack_seg = {
+                        'seq': self.nrosec % 256,
+                        'ack': self.seq_prev,
+                        'syn': False,
+                        'fin': False,
+                        'data': b''
+                    }
+                    self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+                    continue
+                    
 
         # se agarran los datos q sobrearon d cosas anteriores
         message_received = self.buffer_sobrante
@@ -202,13 +239,25 @@ class SocketTCP:
         while len(message_received) < limite_esperado:
             raw_data, self.dirdestino = self.socketUDP.recvfrom(udp_buff_size)
             seg_datos = self.parse_segment(raw_data)
+
+            if seg_datos["fin"]:
+                self.buffer_sobrante = raw_data
+                return message_received
+
+            siguiente_seq = (seg_datos["seq"] + len(seg_datos["data"])) % 256
             
-            if seg_datos["seq"] + len(seg_datos["data"]) != self.seq_prev:
+            if siguiente_seq != self.seq_prev:
                 message_received += seg_datos['data']
-                self.seq_prev = seg_datos["seq"] + len(seg_datos["data"])
+                self.seq_prev = siguiente_seq
 
             # se envía ACK de confirmación solo al emisor
-            ack_seg = {'seq': self.nrosec, 'ack': seg_datos['seq'] + len(seg_datos['data']), 'syn': False, 'fin': False, 'data': b''}
+            ack_seg = {
+                'seq': self.nrosec % 256,
+                'ack': self.seq_prev,
+                'syn': False,
+                'fin': False,
+                'data': b''
+            }
             self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
 
         # si se recibe más de buff_size
@@ -227,11 +276,13 @@ class SocketTCP:
         buff_size = 20
         
         #print(self.nrosec)
-        segmento = {'seq': self.nrosec, 'ack': 0, 'syn': False, 'fin': True, 'data': b""}
+        segmento = {'seq': (self.nrosec)%256, 'ack': 0, 'syn': False, 'fin': True, 'data': b""}
+        exito = False
         #print(msg)
         
         self.socketUDP.settimeout(2.0)
-        
+
+        fin_recibido = None
         i = 0
         while i < 3:
             try:
@@ -239,41 +290,73 @@ class SocketTCP:
                 ack, _ = self.socketUDP.recvfrom(buff_size)
                 msg = self.parse_segment(ack)
                 
-                if msg["fin"] == True and msg["ack"] == self.nrosec + 1:
-                    seg = {'seq': self.nrosec + 2, 'ack': self.nrosec + 2, 'syn': False, 'fin': False, 'data': b""}
-                    self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
+                if msg["fin"] == True and msg["ack"] == (self.nrosec + 1)%256:
+                    fin_recibido = msg
+                    #seg = {'seq': self.nrosec + 2, 'ack': self.nrosec + 2, 'syn': False, 'fin': False, 'data': b""}
+                    #self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
                     break
             except socket.timeout:
                 i+=1
-                print("fallazo_close")
-                continue
+                print(f"Timeout {i}/3 esperando fin+ack")
 
+        if fin_recibido is not None:
+            seg = {'seq': (self.nrosec + 1)%256, 'ack': (fin_recibido['seq'] + 1)%256, 'syn': False, 'fin': False, 'data': b""}
+            for i in range(3):
+                print(f"ack {i}")
+                self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
+        else:
+            print("3 timeouts")
+                
         self.socketUDP.close()
 
     def recv_close(self):
         buff_size = 20
-        ack, _ = self.socketUDP.recvfrom(buff_size)
-        msg = self.parse_segment(ack)
-        
-        if msg["fin"] == True:
-            self.socketUDP.settimeout(2.0)
-            i = 0
-            while i < 3:
-                try:
-                    seg = {'seq': msg["seq"] + 1, 'ack': msg["seq"] + 1, 'syn': False, 'fin': True, 'data': b""}
-                    self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
-                        
-                    final, _ = self.socketUDP.recvfrom(buff_size)
-                    final_ack = self.parse_segment(final)
-                    break
-                except socket.timeout:
-                    i+=1
-                    print("fallazo_recvclose")
-                    continue
-        else:
-            print("no es fin")
-             
-        self.socketUDP.close()
-        
+        self.socketUDP.settimeout(2.0)
 
+        msg = None
+        intentos = 0
+        # Esperamos el primer FIN
+        while intentos < 3:
+            try:
+                if self.buffer_sobrante:
+                    ack = self.buffer_sobrante
+                    self.buffer_sobrante = b""
+                else:
+                    ack, remitente = self.socketUDP.recvfrom(buff_size)
+                    self.dirdestino = remitente
+                    
+                parseado = self.parse_segment(ack)
+                if parseado["fin"]:
+                    self.dirdestino = remitente
+                    msg = parseado
+                    break
+            except socket.timeout:
+                intentos += 1
+                continue
+
+        if msg is None:
+            self.socketUDP.close()
+            return
+        
+        # Enviamos FIN + ACK y esperamos el ACK final
+        seg = {
+            'seq': self.nrosec,
+            'ack': (msg["seq"] + 1) % 256,
+            'syn': False,
+            'fin': True,
+            'data': b""
+        }
+        
+        intentos2 = 0
+        while intentos2 < 3:
+            try:
+                self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
+                final, _ = self.socketUDP.recvfrom(buff_size)
+                final_ack = self.parse_segment(final)
+                if not final_ack["fin"] and not final_ack["syn"]:
+                    break
+            except socket.timeout:
+                intentos2 += 1
+                
+        self.socketUDP.close()
 
