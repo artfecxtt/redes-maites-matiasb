@@ -5,6 +5,7 @@ from socketTCP import SocketTCP
 print('Creando socket - Cliente')
 
 if __name__ == "__main__":
+    es_test2n = True
     buff_size = 16
 
     # socket no orientado a conexión
@@ -19,13 +20,20 @@ if __name__ == "__main__":
     nro_secuencia = 0
     bytes_enviados = 0
 
-    while True:
-        pedacito = sys.stdin.buffer.read(buff_size)
-        if not pedacito:
-            break
-        dgram_socket.send(pedacito)
-          
-    dgram_socket.send(b"__EOF__")  
+    if es_test2n:
+        n = 25
+        mensaje_test = b"A" * (2*n)
+        dgram_socket.send(mensaje_test)
+
+    else:
+        while True:
+            pedacito = sys.stdin.buffer.read(buff_size)
+            if not pedacito:
+                break
+            dgram_socket.send(pedacito)
+                  
+        dgram_socket.send(b"__EOF__")
+        
     dgram_socket.close()
     
     
