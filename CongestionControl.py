@@ -13,7 +13,7 @@ class CongestionControl:
         return self.cwnd
 
     def get_MSS_in_cwnd(self):
-        return self.get_cwnd()//self.MSS
+        return int(self.get_cwnd() // self.MSS)
 
     def event_ack_received(self):
         if self.is_state_slow_start():
@@ -24,7 +24,7 @@ class CongestionControl:
         elif self.is_state_congestion_avoidance():
             mss_contador = self.get_MSS_in_cwnd()
             if mss_contador > 0:
-                self.cwnd += self.MSS/mss_contador
+                self.cwnd += int(self.MSS//mss_contador)
             else:
                 self.cwnd += self.MSS
 

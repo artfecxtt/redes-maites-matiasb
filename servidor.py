@@ -38,26 +38,37 @@ def remove_end_of_message(full_message, end_sequence):
     return full_message[:index]
  
 if __name__ == "__main__":
-    buff_size = 16
+    es_test2n = False
     server_socket = SocketTCP()
     
     server_socket.bind(('localhost', 8000))
 
     connection_socket, client_addr = server_socket.accept()
 
-    mensaje_completo = b""
+    if es_test2n:
+        n = 25
+        pt1 = connection_socket.recv(n)
+        pt2 = connection_socket.recv(n)
+        mensaje_entero = pt1 + pt2
+        print(mensaje_entero.decode("utf-8", errors="ignore"))
 
-    while True:
-        message = connection_socket.recv(buff_size)
-        
-        if b"__EOF__" in message:
-            mensaje_completo+=message.replace(b"__EOF__", b"")
-            print("tamos listos")
-            break
-        mensaje_completo += message
-        print(message)
-        
-    print(mensaje_completo.decode("utf-8"))
+    else:
+        buff_size = 200
+        mensaje_completo = b""
+        while True:
+            message = connection_socket.recv(buff_size)
+
+            if not message:
+                break
+            
+            if b"__EOF__" in message:
+                mensaje_completo+=message.replace(b"__EOF__", b"")
+                print("tamos listos")
+                break
+            mensaje_completo += message
+            print(message)
+            
+        print(mensaje_completo.decode("utf-8"))
     connection_socket.recv_close()
     server_socket.socketUDP.close()
     
