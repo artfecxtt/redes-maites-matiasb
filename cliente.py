@@ -6,7 +6,7 @@ print('Creando socket - Cliente')
 
 if __name__ == "__main__":
     es_test2n = False
-    buff_size = 200
+    buff_size = 20
 
     # socket no orientado a conexión
     dgram_socket = SocketTCP()
@@ -30,9 +30,9 @@ if __name__ == "__main__":
             pedacito = sys.stdin.buffer.read(buff_size)
             if not pedacito:
                 break
-            dgram_socket.send(pedacito)
+            dgram_socket.send(pedacito, mode="go_back_n")
                   
-        dgram_socket.send(b"__EOF__")
+        dgram_socket.send(b"__EOF__", mode="go_back_n")
         
     dgram_socket.close()
     

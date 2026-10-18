@@ -27,6 +27,7 @@ class SocketTCP:
         self.bytes_por_recibir = 0
         self.buffer_sobrante = b""
         self.seq_prev = 0
+        self.number_of_sent_segments = 0
 
     def set_cc(self, var):
         if isinstance(var, bool):
@@ -109,6 +110,7 @@ class SocketTCP:
         ack_seg = {"seq": self.nrosec % 256, "ack": self.nroack % 256, "syn": False, "fin": False, "data": b""} #aquí cambié ack. antes tb era nrosec, pero estoy probando cosas
         log(f"connect: Enviando ACK final de handshake (seq={self.nrosec}, ack={self.nroack})")
         self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+        self.number_of_sent_segments += 1
         print("ta lista la conexión")
     
     def accept(self):
@@ -132,7 +134,6 @@ class SocketTCP:
         nuevo_socket.nroack = (seg['seq'] + 1) % 256
 
         # se envía el SYN + ACK por el nuevo socket
-
         nuevo_socket.socketUDP.settimeout(2.0)
         syn_ack = {'seq': nuevo_socket.nrosec % 256, 'ack': nuevo_socket.nroack % 256, 'syn': True, 'fin': False, 'data': b''}
         
@@ -140,6 +141,7 @@ class SocketTCP:
             try:
                 log(f"accept: Enviando SYN+ACK hacia {nuevo_socket.dirdestino} (seq={nuevo_socket.nrosec % 256}, ack={nuevo_socket.nroack % 256})")
                 nuevo_socket.socketUDP.sendto(self.create_segment(syn_ack), nuevo_socket.dirdestino)
+                self.number_of_sent_segments += 1
                 
                 # se espera el ACK final en el 8001
                 ack, _ = nuevo_socket.socketUDP.recvfrom(16)
@@ -158,6 +160,7 @@ class SocketTCP:
                     nuevo_socket.buffer_sobrante = ack
                     break
             except socket.timeout:
+                nuevo_socket.detener_timer(0)
                 log("accept: Timeout esperando ACK final del handshake. Reenviando SYN+ACK")
                 continue
         
@@ -165,13 +168,17 @@ class SocketTCP:
 
     # -------------------------------- esto es nuevo de la act goback ----------------------------------------
     #stop_and_wait go_back_n
-    def send(self, message, mode="go_back_n"):
+    def send(self, message, mode="stop_and_wait"):
+        if debug:
+            print(mode)
         if mode == "stop_and_wait":
             return self.send_using_stop_and_wait(message)
         elif mode == "go_back_n":
             return self.send_using_go_back_n(message)
     
-    def recv(self, buff_size, mode="go_back_n"):
+    def recv(self, buff_size, mode="stop_and_wait"):
+        if debug:
+            print(mode)
         if mode == "stop_and_wait":
             return self.recv_using_stop_and_wait(buff_size)
         elif mode == "go_back_n":
@@ -193,8 +200,10 @@ class SocketTCP:
         i = 0
         while i < 3:
             try:
+                self.detener_timer(0)
                 log(f"close: Enviando paquete FIN (intento {i+1}/3, seq={self.nrosec % 256})")
                 self.socketUDP.sendto(self.create_segment(segmento), self.dirdestino)
+                self.number_of_sent_segments += 1
                 ack, _ = self.socketUDP.recvfrom(buff_size)
                 msg = self.parse_segment(ack)
                 
@@ -210,15 +219,17 @@ class SocketTCP:
                 i+=1
                 log(f"close: Timeout {i}/3 esperando confirmación FIN+ACK")
 
+        self.detener_timer(0)
         if fin_recibido is not None:
             seg = {'seq': (self.nrosec + 1)%256, 'ack': (fin_recibido['seq'] + 1)%256, 'syn': False, 'fin': False, 'data': b""}
             log("close: Enviando 3 ráfagas de confirmación final ACK espaciadas por timeout")
             for j in range(3):
                 log(f"close: Enviando ACK final de cierre número {j+1}/3")
                 self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
+                self.number_of_sent_segments += 1
         else:
             log("close: 3 timeouts alcanzados sin respuesta, asumiendo cierre unilateral")
-                
+
         self.socketUDP.close()
         log("close: Socket liberado")
 
@@ -270,8 +281,10 @@ class SocketTCP:
         intentos2 = 0
         while intentos2 < 3:
             try:
+                self.detener_timer(0)
                 log(f"recv_close: Enviando FIN+ACK (intento {intentos2+1}/3)")
                 self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
+                self.number_of_sent_segments += 1
                 final, _ = self.socketUDP.recvfrom(buff_size)
                 final_ack = self.parse_segment(final)
                 if not final_ack["fin"] and not final_ack["syn"]:
@@ -280,7 +293,8 @@ class SocketTCP:
             except socket.timeout:
                 intentos2 += 1
                 log(f"recv_close: Timeout {intentos2}/3 esperando el último ACK de la contraparte")
-                
+
+        self.detener_timer(0)
         self.socketUDP.close()
         log("recv_close: Socket liberado")
 
@@ -293,55 +307,119 @@ class SocketTCP:
         self.socketUDP.settimeout(2.0)
         
         largo_bytes = str(msg_length).encode('utf-8')
-        segmento = {'seq': self.nrosec, 'ack': 0, 'syn': False, 'fin': False, 'data': largo_bytes}
+        segmento = {'seq': self.nrosec % 256, 'ack': 0, 'syn': False, 'fin': False, 'data': largo_bytes}
+        esperado_ack = (self.nrosec + len(largo_bytes)) % 256
+        log(f"send: Enviando paquete de longitud ({msg_length} bytes, seq={self.nrosec % 256})")
         
         while True:
             try:
+                self.detener_timer(0)
                 self.socketUDP.sendto(self.create_segment(segmento), self.dirdestino)
                 ack, _ = self.socketUDP.recvfrom(buff_size)
-                self.nrosec += len(largo_bytes)
-                break
+                ack_seg = self.parse_segment(ack)
+
+                if ack_seg['ack'] == esperado_ack:
+                    log(f"send: Longitud confirmada con éxito (ACK={ack_seg['ack']})")
+                    self.nrosec = esperado_ack
+                    break
+                else:
+                    log(f"send: ACK desalineado o duplicado esperando longitud (recibido={ack_seg['ack']}, esperado={esperado_ack})")
+                
             except socket.timeout:
+                log("send: Timeout esperando ACK de longitud. Reenviando")
                 continue
     
         bytes_enviados = 0
+        fragmento_num = 1
 
         while True:
             pedacito = message[bytes_enviados:bytes_enviados+16]
             if not pedacito:
                 break
-            seg = {'seq': self.nrosec, 'ack': 0, 'syn': False, 'fin': False, 'data': pedacito}
+            seg = {'seq': self.nrosec % 256, 'ack': 0, 'syn': False, 'fin': False, 'data': pedacito}
+            esperado_ack = (self.nrosec + len(pedacito)) % 256
+            log(f"send: Enviando fragmento número {fragmento_num} (seq={self.nrosec % 256}, len={len(pedacito)})")
             
             while True:
                 try:
+                    self.detener_timer(0)
                     self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
                     ack, _ = self.socketUDP.recvfrom(buff_size)
-                    self.nrosec += len(pedacito)
-                    bytes_enviados += len(pedacito)
-                    break
+                    ack_seg = self.parse_segment(ack)
+
+                    if ack_seg['ack'] == esperado_ack:
+                        log(f"send: Fragmento número {fragmento_num} confirmado con ACK={ack_seg['ack']}")
+                        self.nrosec = esperado_ack
+                        bytes_enviados += len(pedacito)
+                        fragmento_num += 1
+                        break
+                    else:
+                        log(f"send: ACK repetido/descartado (recibido={ack_seg['ack']}, esperado={esperado_ack})")
                 except socket.timeout:
+                    log(f"send: Timeout esperando ACK del fragmento número {fragmento_num}. Reenviando por Stop & Wait")
                     continue
+                
+        self.detener_timer(0)
+
+        #fin_seg = {'seq': self.nrosec, 'ack': 0, 'syn': False, 'fin': True, 'data': b""}
+        #self.socketUDP.sendto(self.create_segment(fin_seg), self.dirdestino)
 
     def recv_using_stop_and_wait(self, buff_size):
         udp_buff_size = 20
-
+        self.detener_timer(0)          # limpia el timer que dejó accept
+        self.socketUDP.settimeout(-1)
+        
         # si los bytes_por_recibir son 0, hay q esperar por el mensaje inicial cn el largo
         if self.bytes_por_recibir == 0:
-            if self.buffer_sobrante:
-                msg = self.buffer_sobrante
-                self.buffer_sobrante = b""
-            else:
-                msg, self.dirdestino = self.socketUDP.recvfrom(udp_buff_size)
-                
-            seg_largo = self.parse_segment(msg)
-            # se saca la longitud
-            message_length = int(seg_largo['data'].decode('utf-8'))
-            self.seq_prev = seg_largo["seq"]
-            self.bytes_por_recibir = message_length
+            log("recv: Iniciando recepción: esperando longitud total del mensaje")
+            while True:
+                try:
+                    if self.buffer_sobrante:
+                        msg = self.buffer_sobrante
+                        self.buffer_sobrante = b""
+                        log("recv: Consumiendo paquete de longitud almacenado previamente en buffer")
+                    else:
+                        msg, self.dirdestino = self.socketUDP.recvfrom(udp_buff_size)
+                        
+                    seg_largo = self.parse_segment(msg)
 
-            # se envía el ACK de confirmación al emisor
-            ack_seg = {'seq': self.nrosec, 'ack': seg_largo['seq'] + len(seg_largo['data']), 'syn': False, 'fin': False, 'data': b''}
-            self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+                    if seg_largo["fin"]:
+                        log("recv: Paquete FIN detectado antes de iniciar transmisión")
+                        self.buffer_sobrante = msg
+                        return b""
+
+                    # tolerancia pérdidas
+                    try:
+                        # se saca la longitud
+                        message_length = int(seg_largo['data'].decode('utf-8'))
+                        self.seq_prev = (seg_largo["seq"] + len(seg_largo['data'])) % 256
+                        self.bytes_por_recibir = message_length
+                        log(f"recv: Longitud total decodificada: {message_length} bytes. Próximo seq esperado={self.seq_prev}")
+
+                        # se envía el ACK de confirmación al emisor
+                        ack_seg = {
+                            'seq': self.nrosec % 256,
+                            'ack': self.seq_prev,
+                            'syn': False,
+                            'fin': False,
+                            'data': b''
+                        }
+                        self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+                        break
+                    except ValueError:
+                        log("recv: Segmento residual o duplicado recibido. Reenviando ACK acumulativo para desatascar al emisor")
+                        ack_seg = {
+                            'seq': self.nrosec % 256,
+                            'ack': self.seq_prev,
+                            'syn': False,
+                            'fin': False,
+                            'data': b''
+                        }
+                        self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+                        continue
+                except socket.timeout:
+                    log("recv: Timeout esperando longitud. Continuando escucha activa")
+                    
 
         # se agarran los datos q sobrearon d cosas anteriores
         message_received = self.buffer_sobrante
@@ -349,30 +427,52 @@ class SocketTCP:
 
         # cálculo de máximo a retornar en esta llamada
         limite_esperado = min(self.bytes_por_recibir, buff_size)
+        log(f"recv: Reuniendo datos: actualmente {len(message_received)}/{limite_esperado} bytes solicitados")
 
         # se recibe contenido hasta cumplir la condición
         while len(message_received) < limite_esperado:
-            raw_data, self.dirdestino = self.socketUDP.recvfrom(udp_buff_size)
-            seg_datos = self.parse_segment(raw_data)
-            
-            if seg_datos["seq"] + len(seg_datos["data"]) != self.seq_prev:
-                message_received += seg_datos['data']
-                self.seq_prev = seg_datos["seq"] + len(seg_datos["data"])
+            try:
+                raw_data, self.dirdestino = self.socketUDP.recvfrom(udp_buff_size)
+                seg_datos = self.parse_segment(raw_data)
 
-            # se envía ACK de confirmación solo al emisor
-            ack_seg = {'seq': self.nrosec, 'ack': seg_datos['seq'] + len(seg_datos['data']), 'syn': False, 'fin': False, 'data': b''}
-            self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+                if seg_datos["fin"]:
+                    log("recv: FIN detectado durante transferencia de datos. Finalizando lectura")
+                    self.buffer_sobrante = raw_data
+                    return message_received
+
+                siguiente_seq = (seg_datos["seq"] + len(seg_datos["data"])) % 256
+                
+                if siguiente_seq != self.seq_prev:
+                    log(f"recv: Datos nuevos recibidos, {len(seg_datos['data'])} bytes (seq={seg_datos['seq']})")
+                    message_received += seg_datos['data']
+                    self.seq_prev = siguiente_seq
+                else:
+                    log(f"recv: Paquete duplicado detectado (seq={seg_datos['seq']}). Descartando carga útil")
+
+                # se envía ACK de confirmación solo al emisor
+                ack_seg = {
+                    'seq': self.nrosec % 256,
+                    'ack': self.seq_prev,
+                    'syn': False,
+                    'fin': False,
+                    'data': b''
+                }
+                self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+            except socket.timeout:
+                log("recv: Timeout esperando fragmento de datos. Manteniendo socket en escucha")
+                continue
 
         # si se recibe más de buff_size
         if len(message_received) > buff_size:
             self.buffer_sobrante = message_received[buff_size:] #se guarda lo q sobre
             resultado = message_received[:buff_size] # se retorna lo q se pide
+            log(f"recv: Buffer saturado, retornando {len(resultado)} bytes, guardando {len(self.buffer_sobrante)} bytes sobrantes")
         else:
             resultado = message_received
 
         # se restan los bytes entregado
         self.bytes_por_recibir -= len(resultado)
-
+        log(f"recv: Llamada lista. Bytes restantes por recibir en el flujo: {self.bytes_por_recibir}")
         return resultado
 
     def detener_timer(self, i=0):
@@ -380,12 +480,11 @@ class SocketTCP:
             self.socketUDP.stop_timer(i)
             
     def send_using_go_back_n(self, message):
-        debug = True
         buff_size = 12
         mss = 8
         msg_length = len(message)
         
-        self.socketUDP.settimeout(2.0)
+        self.socketUDP.settimeout(0.5)
 
         # --- 1. enviar el largo del mensaje (stop & wait) ---
         largo_bytes = str(msg_length).encode('utf-8')
@@ -393,6 +492,7 @@ class SocketTCP:
         while True:
             try:
                 self.socketUDP.sendto(self.create_segment(segmento), self.dirdestino)
+                self.number_of_sent_segments += 1
                 ack, _ = self.socketUDP.recvfrom(buff_size)
                 self.detener_timer(0)
                 resp = self.parse_segment(ack)
@@ -406,7 +506,11 @@ class SocketTCP:
             return
 
         # --- 2. enviar los datos con Go Back-N ---
-        lista_data = [message[i:i + mss] for i in range(0, msg_length, mss)]
+        lista_data = []
+        for i in range(0, msg_length, mss):
+            bloque = message[i:i + mss]
+            lista_data.append(bloque)
+
         segmentos_totales = len(lista_data)
 
         init_win = None
@@ -438,6 +542,7 @@ class SocketTCP:
                 seg = {'seq': sw.get_sequence_number(proximo_a_enviar), 'ack': 0, 'syn': False,
                        'fin': False, 'data': sw.get_data(proximo_a_enviar)}
                 self.socketUDP.sendto(self.create_segment(seg), self.dirdestino)
+                self.number_of_sent_segments += 1
 
                 if debug:
                     base_seq = sw.get_sequence_number(0)
@@ -450,6 +555,7 @@ class SocketTCP:
                 seg_base = {'seq': sw.get_sequence_number(0), 'ack': 0, 'syn': False,
                             'fin': False, 'data': sw.get_data(0)}
                 self.socketUDP.sendto(self.create_segment(seg_base), self.dirdestino)
+                self.number_of_sent_segments += 1
                 if debug:
                     print(f"(retransmisión base) timer inactivo. reenviando seq base: {sw.get_sequence_number(0)}")
 
@@ -519,6 +625,7 @@ class SocketTCP:
             print("="*60)
             print("--- transmisión bien terminada ---")
             print("="*60+"\n")
+            print(f"número de segmentos intercambiados: {self.number_of_sent_segments}")
                             
     def recv_using_go_back_n(self, buff_size):
         udp_buff_size = 12
@@ -547,6 +654,7 @@ class SocketTCP:
                     ack_seg = {'seq': self.nrosec % 256, 'ack': self.seq_prev,
                                'syn': False, 'fin': False, 'data': b''}
                     self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+                    self.number_of_sent_segments += 1
                     # El bucle 'while True' volverá a ejecutar recvfrom() para sacar el paquete correcto
 
             # El primer byte de datos esperado empieza en:
@@ -557,6 +665,7 @@ class SocketTCP:
             ack_seg = {'seq': self.nrosec % 256, 'ack': self.seq_prev,
                        'syn': False, 'fin': False, 'data': b''}
             self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+            self.number_of_sent_segments += 1
 
         # 2. Rescatar sobrante previo
         message_received = self.buffer_sobrante
@@ -577,6 +686,7 @@ class SocketTCP:
             ack_seg = {'seq': self.nrosec % 256, 'ack': self.seq_prev,
                        'syn': False, 'fin': False, 'data': b''}
             self.socketUDP.sendto(self.create_segment(ack_seg), self.dirdestino)
+            self.number_of_sent_segments += 1
 
         # 4. Manejo de sobrante
         if len(message_received) > buff_size:
