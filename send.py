@@ -4,15 +4,15 @@ from router import parse_packet, create_packet
 
 # script parte 5
 
-if __main__ == "__name__":
+if __name__ == "__main__":
     ip_router_final = sys.argv[1]
-    puerto_router_final = sys.argv[2]
+    puerto_router_final = int(sys.argv[2])
     mensaje_str = sys.argv[3]
     
     ip_envio = sys.argv[4]
     port_envio = int(sys.argv[5])
 
-    parsed_packet = {"ip": ip_final, "port": port_final, "mensaje": mensaje_str.encode('utf-8')}
+    parsed_packet = {"ip": ip_router_final, "port": puerto_router_final, "mensaje": mensaje_str.encode('utf-8')}
 
     packet_bytes = create_packet(parsed_packet)
 

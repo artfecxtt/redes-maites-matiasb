@@ -59,8 +59,20 @@ def create_packet(parsed_IP_packet):
 
     return ip_bytes + port_bytes + parsed_IP_packet["mensaje"]
 
+# esto es para la parte 8, round robin. se necesita mantener el historial de revisiones, y en vez de implementar una clase,
+# es más simple meter un diccionario "global"
+
+# aquí se guarda el índice de la próxima ruta
+contadores = {}
+
 def check_routes(routes_file_name: str, destination_address: tuple[str, int]) -> tuple[str, int]:
     dest_ip_str, dest_port = destination_address
+
+    # junta todos los saltos posibles para este router
+    candidatas = []
+
+    # guarda qué área coincidió. iniciado como None pq todavía no se encuentran áreas
+    clave = None
 
     with open(routes_file_name, 'r', encoding='utf-8') as f:
         for line in f:
@@ -84,13 +96,34 @@ def check_routes(routes_file_name: str, destination_address: tuple[str, int]) ->
 
             base_ip = red_cidr.split('/')[0]
             if (dest_ip_str == base_ip) and (puerto_inicial <= dest_port <= puerto_final):
-                return (next_hop_IP, next_hop_puerto)
 
-    return None
+                # en la primera línea que coincide, fijamos clave como el área de esa línea
+                if clave == None:
+                    clave = (red_cidr, puerto_inicial, puerto_final)
+
+                # cada línea que coincida y tenga esa misma clave agrega el salto a candidatas. así, si hay otra línea que tb coincide
+                # pero con otro rango, no se mezcla con el ciclo. así, se revisa la tabla en orden
+                if (red_cidr, puerto_inicial, puerto_final) == clave:
+                    candidatas.append((next_hop_IP, int(next_hop_puerto)))
+
+    # si ninguna línea coincide, la lista está vacía y devolvermos None (para la condición de "no hay rutas")
+    if not candidatas:
+        return None
+        #return (next_hop_IP, next_hop_puerto)
+
+    # aquí es donde se maneja el Round Robin en sí.
+    # esta primera línea busca el índice guardado para esa área. si es la primera vez, se parte con 0
+    i = contadores.get(clave, 0)
+
+    # deja guardado el índice para la próxima vez en el diccionario
+    contadores[clave] = i + 1
+
+    # i % len(candidatas) convierte el contador en una posición válida de la lista. el módulo hace que al pasar del último, se vuelva al primero
+    return candidatas[i % len(candidatas)]
 
 if __name__ == "__main__":
     router_IP = sys.argv[1]
-    router_puerto = sys.argv[2]
+    router_puerto = int(sys.argv[2])
     rutas = sys.argv[3]
 
     print(f"{router_IP}, {router_puerto}, {rutas}")
@@ -98,10 +131,25 @@ if __name__ == "__main__":
     buff_size = 4096
     
     router_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    router_socket.bind((router_ip, router_port))
+    router_socket.bind((router_IP, router_puerto))
     while True:
-        data, addr = router_socket(recvfrom(buff_size))
-    
+        data, addr = router_socket.recvfrom(buff_size)
+        parseado = parse_packet(data)
+        paquete_ip = parseado["ip"]
+        paquete_puerto = parseado["port"]
+        paquete_mensaje = parseado["mensaje"]
+        if paquete_puerto == router_puerto and paquete_ip == router_IP:
+            print(paquete_mensaje.decode())
+        else:
+            datos_check = check_routes(rutas, (paquete_ip, paquete_puerto))
+            if datos_check == None:
+                print(f"No hay rutas hacia {(paquete_ip, paquete_puerto)} para paquete {data}")
+            else:
+                salto_ip = datos_check[0]
+                salto_puerto = datos_check[1]
+                print(f"Redirigiendo paquete {data} con destino final {(paquete_ip, paquete_puerto)} desde {(router_IP, router_puerto)} hacia {(salto_ip, salto_puerto)}")
+                router_socket.sendto(data, (salto_ip, salto_puerto))
+            
     router_socket.close()
 
 
