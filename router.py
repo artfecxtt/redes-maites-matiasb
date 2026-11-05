@@ -42,9 +42,11 @@ def parse_packet(IP_packet: bytes):
 
     port = int.from_bytes(IP_packet[4:6])
 
-    mensaje = IP_packet[6:]
+    ttl = int.from_bytes(IP_packet[6:7])
+    
+    mensaje = IP_packet[7:]
 
-    return {"ip": ip_str, "port": port, "mensaje": mensaje}
+    return {"ip": ip_str, "port": port, "ttl": ttl, "mensaje": mensaje}
     
 # pasa a bytes la ip (4b), el puerto (2b) y el mensaje 
 def create_packet(parsed_IP_packet):
@@ -57,7 +59,9 @@ def create_packet(parsed_IP_packet):
 
     port_bytes = parsed_IP_packet["port"].to_bytes(2)
 
-    return ip_bytes + port_bytes + parsed_IP_packet["mensaje"]
+    ttl_bytes = parsed_IP_packet["ttl"].to_bytes(1)
+
+    return ip_bytes + port_bytes + ttl_bytes + parsed_IP_packet["mensaje"]
 
 # esto es para la parte 8, round robin. se necesita mantener el historial de revisiones, y en vez de implementar una clase,
 # es más simple meter un diccionario "global"
@@ -135,20 +139,28 @@ if __name__ == "__main__":
     while True:
         data, addr = router_socket.recvfrom(buff_size)
         parseado = parse_packet(data)
-        paquete_ip = parseado["ip"]
-        paquete_puerto = parseado["port"]
-        paquete_mensaje = parseado["mensaje"]
-        if paquete_puerto == router_puerto and paquete_ip == router_IP:
-            print(paquete_mensaje.decode())
+        paquete_ttl = parseado["ttl"]
+
+        if paquete_ttl <= 0:
+            print(f"Se recibió paquete {data} con TTL 0")
+            continue
         else:
-            datos_check = check_routes(rutas, (paquete_ip, paquete_puerto))
-            if datos_check == None:
-                print(f"No hay rutas hacia {(paquete_ip, paquete_puerto)} para paquete {data}")
+            paquete_ip = parseado["ip"]
+            paquete_puerto = parseado["port"]
+            paquete_mensaje = parseado["mensaje"]
+            if paquete_puerto == router_puerto and paquete_ip == router_IP:
+                print(paquete_mensaje.decode())
             else:
-                salto_ip = datos_check[0]
-                salto_puerto = datos_check[1]
-                print(f"Redirigiendo paquete {data} con destino final {(paquete_ip, paquete_puerto)} desde {(router_IP, router_puerto)} hacia {(salto_ip, salto_puerto)}")
-                router_socket.sendto(data, (salto_ip, salto_puerto))
+                datos_check = check_routes(rutas, (paquete_ip, paquete_puerto))
+                if datos_check == None:
+                    print(f"No hay rutas hacia {(paquete_ip, paquete_puerto)} para paquete {data}")
+                else:
+                    salto_ip = datos_check[0]
+                    salto_puerto = datos_check[1]
+                    parseado["ttl"] -= 1
+                    nuevo = create_packet(parseado)
+                    print(f"Redirigiendo paquete {nuevo} con destino final {(paquete_ip, paquete_puerto)} desde {(router_IP, router_puerto)} hacia {(salto_ip, salto_puerto)}")
+                    router_socket.sendto(nuevo, (salto_ip, salto_puerto))
             
     router_socket.close()
 
